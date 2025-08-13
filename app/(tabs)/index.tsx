@@ -1,75 +1,153 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+// app/tabs/index.tsx
+import { useState, useRef, useEffect } from 'react';
+import { View, Button, StyleSheet, Share, Alert, Pressable, Platform, Text } from 'react-native';
+import { Camera, CameraType } from 'expo-camera';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 
-import { HelloWave } from '@/components/HelloWave';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
-import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
+// Import the FadeInMessage component
+import FadeInMessage from '../../components/FadeInMessage';
 
 export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
-  );
+    const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+    const [cameraOpen, setCameraOpen] = useState(false);
+
+    const cameraRef = useRef<Camera | null>(null);
+    const [webStream, setWebStream] = useState<MediaStream | null>(null);
+    const videoRef = useRef<HTMLVideoElement | null>(null);
+
+    // Animation 2: scaling button
+    const scale = useSharedValue(1);
+    const animatedStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: scale.value }],
+    }));
+
+    // Request camera permission
+    const requestPermission = async () => {
+        if (Platform.OS === 'web') {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                setWebStream(stream);
+                setCameraOpen(true);
+                setHasPermission(true);
+            } catch (err) {
+                console.error(err);
+                Alert.alert('Permission denied', 'Camera access is required.');
+                setHasPermission(false);
+            }
+            return;
+        }
+
+        const { status } = await Camera.requestCameraPermissionsAsync();
+        setHasPermission(status === 'granted');
+        if (status === 'granted') setCameraOpen(true);
+        else Alert.alert('Permission denied', 'Camera access is required.');
+    };
+
+    // Attach web camera stream
+    useEffect(() => {
+        if (Platform.OS === 'web' && videoRef.current && webStream) {
+            videoRef.current.srcObject = webStream;
+            videoRef.current.play().catch(console.error);
+        }
+    }, [webStream]);
+
+    // Take picture
+    const takePicture = async () => {
+        if (Platform.OS === 'web') {
+            if (!videoRef.current) return;
+            const canvas = document.createElement('canvas');
+            canvas.width = videoRef.current.videoWidth;
+            canvas.height = videoRef.current.videoHeight;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+            const dataUrl = canvas.toDataURL('image/png');
+            Alert.alert('Photo taken!', dataUrl);
+        } else {
+            if (cameraRef.current) {
+                const photo = await cameraRef.current.takePictureAsync();
+                Alert.alert('Photo taken!', photo.uri);
+            }
+        }
+    };
+
+    // Share app
+    const shareApp = async () => {
+        try {
+            await Share.share({
+                message: 'Check out this awesome Expo Router app! 🚀',
+            });
+        } catch (error) {
+            Alert.alert('Error', 'Could not share content.');
+        }
+    };
+
+    // Mobile camera view
+    if (cameraOpen && hasPermission && Platform.OS !== 'web') {
+        return (
+            <Camera style={styles.camera} type={CameraType.back} ref={cameraRef}>
+                <View style={styles.buttonRow}>
+                    <Button title="Take Picture" onPress={takePicture} />
+                    <Button title="Close Camera" onPress={() => setCameraOpen(false)} />
+                </View>
+            </Camera>
+        );
+    }
+
+    // Web camera view
+    if (cameraOpen && Platform.OS === 'web') {
+        return (
+            <View style={styles.container}>
+                {webStream ? (
+                    <video ref={videoRef} style={styles.webCamera} />
+                ) : (
+                    <Text>Loading camera...</Text>
+                )}
+                <View style={{ marginTop: 16, flexDirection: 'row', gap: 10 }}>
+                    <Button title="Take Picture" onPress={takePicture} />
+                    <Button
+                        title="Close Camera"
+                        onPress={() => {
+                            setCameraOpen(false);
+                            webStream?.getTracks().forEach(track => track.stop());
+                            setWebStream(null);
+                        }}
+                    />
+                </View>
+            </View>
+        );
+    }
+
+    // Default home screen with animations
+    return (
+        <View style={styles.container}>
+            <FadeInMessage />
+            <Pressable
+                onPressIn={() => (scale.value = withSpring(1.1))}
+                onPressOut={() => (scale.value = withSpring(1))}
+                onPress={requestPermission}
+            >
+                <Animated.View style={[styles.buttonWrapper, animatedStyle]}>
+                    <Button title="Open Camera" onPress={requestPermission} />
+                </Animated.View>
+            </Pressable>
+            <View style={{ height: 20 }} />
+            <Button title="Share App" onPress={shareApp} />
+        </View>
+    );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-  },
+    container: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16 },
+    camera: { flex: 1, width: '100%' },
+    webCamera: { width: 640, height: 480, backgroundColor: 'black' },
+    buttonRow: {
+        position: 'absolute',
+        bottom: 20,
+        left: 0,
+        right: 0,
+        flexDirection: 'row',
+        justifyContent: 'space-around',
+    },
+    buttonWrapper: { borderRadius: 8, overflow: 'hidden' },
 });
